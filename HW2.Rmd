@@ -5,6 +5,7 @@ date: "1/9/2021"
 output: html_document
 ---
 
+
 ```{r}
 # Handmade EM4MoG ---------------------------------------------------------
 
@@ -64,15 +65,17 @@ handmade.em <- function(y, p, mu, sigma, n_iter, plot_flag = T)
     }
     
     # Plot
-    if (plot_flag){
-      hist(y, prob = T, breaks = 30, col = gray(.8), border = NA, 
-           main = "", xlab = paste("EM Iteration: ", iter, "/", n_iter, sep = ""))
-      set.seed(123)
-      points(jitter(y), rep(0,length(y)), 
-             pch = 19, cex = .6, 
-             col = cols[ (dnorm(y,mu[1],sigma[1]) > dnorm(y,mu[2],sigma[2])) + 1])
-      curve(curve_val, lwd = 4, col = rgb(0,0,0,.5), add = TRUE)
-      Sys.sleep(0.1)
+    if(iter == 4000){
+      if (plot_flag){
+        hist(y, prob = T, breaks = 30, col = gray(.8), border = NA, 
+             main = "", xlab = paste("EM Iteration: ", iter, "/", n_iter, sep = ""))
+        set.seed(123)
+        points(jitter(y), rep(0,length(y)), 
+               pch = 19, cex = .6, 
+               col = cols[ (dnorm(y,mu[1],sigma[1]) > dnorm(y,mu[2],sigma[2])) + 1])
+        curve(curve_val, lwd = 4, col = rgb(0,0,0,.5), add = TRUE)
+        #Sys.sleep(0.1)
+      }
     }
   }
   res <- data.frame(res)
@@ -93,40 +96,85 @@ hem_fit$deviance
 ```
 
 ```{r}
-give_me_a_name <- function(n, gauss_num){
-  p <- rep(1/gauss_num, gauss_num)
-  mu    <- runif(gauss_num, min = 0.1, max= 0.9)
-  sigma <- runif(gauss_num, min = 0.1, max = 0.9)
+# n = sample size
+# k = number of gaussians
+get_parameters <- function(XX, n, k){
+    
+  mat <- matrix(nrow = length(XX), ncol = 1)
+  mat[, 1] <- XX
+  kpp = kmpp(mat, k)
   
-  XX <- rnormmix(n,
-           lambda = c(0.5, rep(0.1,5)),
-           mu = c(0, ((0:4)/2)-1),
-           sigma = c(1, rep(0.1,5)) )
   
-  out1 <- handmade.em(XX, p, mu, sigma, n_iter = 30)
+  p <- rep(1/k, k)
+  mu <- c(kpp$centers)
+  if(k == 1){
+    mu = mu[1]
+  }
+  sigma <- rep(.2, k)
   
+  return(list(XX = XX, p = p, mu = mu, sigma = sigma))
 }
 ```
 
 
 ```{r}
-give_me_a_name(25, 6)
+require(mixtools)
+give_me_a_name <- function(n, k){
+  XX <- rnormmix(n,
+               lambda = c(0.5, rep(0.1,5)),
+               mu = c(0, ((0:4)/2)-1),
+               sigma = c(1, rep(0.1,5)) )
+  
+  par = get_parameters(XX, n, k)
+  p = par$p
+  mu = par$mu
+  sigma = par$sigma
+
+  out1 <- handmade.em(XX, p, mu, sigma, n_iter = 4001)
+  
+}
+```
+
+```{r}
+give_me_a_name(n = 25, k = 8)
 ```
 ```{r}
-give_me_a_name(2000, 6)
+give_me_a_name(n = 2000, k = 8)
 ```
+```{r}
+k_max = 8
+p_list = list()
+mu_list = list()
+sigma_list = list()
+
+n = 2000
+XX <- rnormmix(n,
+             lambda = c(0.5, rep(0.1,5)),
+             mu = c(0, ((0:4)/2)-1),
+             sigma = c(1, rep(0.1,5)) )
+
+for(k in 1:k_max){
+  par = get_parameters(XX = XX, n = n, k = k)
+  p_list = append(p_list, list(par$p))
+  mu_list = append(mu_list, list(par$mu))
+  sigma_list = append(sigma_list, list(par$sigma))
+}
+
+```
+
+
 
 ```{r}
 # AIC
 
-AIC <- function(y, kmax, n_iter) {
+AIC <- function(y, kmax, n_iter, p, mu, sigma) {
   aic.j <- c()
   
   for (k in 1:kmax){
-    p <- rep(1/k, k)
-    mu    <- runif(k, min = 0.1, max= 0.9)
-    sigma <- runif(k, min = 0.1, max = 0.9)
-
+    p <- p_list[[k]]
+    mu <- mu_list[[k]]
+    sigma <- sigma_list[[k]]
+    
     out.opt <- handmade.em(y, p, mu, sigma, n_iter = 20, plot_flag = F)
     
     p <- out.opt$parameters[1:k]
@@ -147,12 +195,13 @@ AIC <- function(y, kmax, n_iter) {
 ```
 
 ```{r}
+n = 2000
 XX <- rnormmix(n,
            lambda = c(0.5, rep(0.1,5)),
            mu = c(0, ((0:4)/2)-1),
            sigma = c(1, rep(0.1,5)) )
 
-AIC(XX, 5, 20)
+AIC(XX, 8, 20)
 ```
 
 ```{r}
@@ -175,7 +224,7 @@ BIC <- function(y, kmax, n_iter) {
     for(i in 1:k){
       like = like + p[i]*dnorm(y, mu[i], sigma[i])
     }
-
+  
     bic.j <- c(bic.j, sum(log(like)) - log(len.y)/2 * k)
   }
 
@@ -190,6 +239,127 @@ XX <- rnormmix(n,
            mu = c(0, ((0:4)/2)-1),
            sigma = c(1, rep(0.1,5)) )
 
-BIC(XX, 5, 20)
+BIC(XX, 8, 20)
+```
+
+```{r}
+training.model <- function(y_train, y_test, kmax, n_iter) {
+  like.j <- c()
+  
+  for (k in 1:kmax){
+    p <- rep(1/k, k)
+    mu    <- runif(k, min = 0.1, max= 0.9)
+    sigma <- runif(k, min = 0.1, max = 0.9)
+    
+    out.opt <- handmade.em(y_train, p, mu, sigma, n_iter = n_iter, plot_flag = F) # get the estimated parameters
+    
+    p <- out.opt$parameters[1:k]
+    mu <- out.opt$parameters[(k+1):(2*k)]
+    sigma <- out.opt$parameters[(2*k+1):(3*k)]
+    
+    like <- 0
+    for(i in 1:k){
+      like = like + p[i]*dnorm(y_test, mu[i], sigma[i])
+    }
+    
+    like.j <- c(like.j, sum(log(like)))
+  }
+  
+  best.k <- which.max(like.j) # return the index of the k component the maximize the score 
+  return(best.k)
+}
+```
+
+```{r}
+XX <- rnormmix(n,
+           lambda = c(0.5, rep(0.1,5)),
+           mu = c(0, ((0:4)/2)-1),
+           sigma = c(1, rep(0.1,5)) )
+```
+
+```{r}
+require(caret)
+# 50% 50%
+trainIndex <- createDataPartition(XX, p = .5, 
+                                  list = FALSE, 
+                                  times = 1)
+y_train <- XX[ trainIndex]
+y_test  <- XX[-trainIndex]
+
+training.model(y_train, y_test, 8, 20)
+```
+
+```{r}
+# 70% 30%
+trainIndex <- createDataPartition(XX, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+y_train <- XX[ trainIndex]
+y_test  <- XX[-trainIndex]
+
+training.model(y_train, y_test, 8, 20)
+```
+
+```{r}
+# 30% 70%
+trainIndex <- createDataPartition(XX, p = .3, 
+                                  list = FALSE, 
+                                  times = 1)
+y_train <- XX[ trainIndex]
+y_test  <- XX[-trainIndex]
+
+training.model(y_train, y_test, 8, 20)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(caret)
+k.fold.cross.validation <- function(y, k_folds, kmax, n_iter) {
+  best.cross.v <- c() 
+  expectations <- c()
+  like.j <- c()
+  
+  lst.k.folds <- createFolds(y, k = k_folds, list = TRUE, returnTrain = FALSE) # create k folds with n observations
+  
+  fold.names <- names(lst.k.folds)
+  for (k in 1:kmax) { # train the model kmax iterations
+    for (x in 1:k_folds) { # train each fold k times
+      # divide the observations
+      n.k.fold <- fold.names[x]
+      
+      test.set <- y[unlist(lst.k.folds[n.k.fold], use.names=FALSE)]            
+      train.set <- y[-unlist(lst.k.folds[n.k.fold], use.names = FALSE)]          
+      
+      # randomly initialize parameters
+      p <- rep(1/k, k)
+      mu    <- runif(k, min = 0.1, max= 0.9)
+      sigma <- runif(k, min = 0.1, max = 0.9)
+      
+      # get the estimated parameters
+      out.opt <- handmade.em(train.set, p, mu, sigma, n_iter = n_iter, plot_flag = F)
+      
+      p <- out.opt$parameters[1:k]
+      mu <- out.opt$parameters[(k+1):(2*k)]
+      sigma <- out.opt$parameters[(2*k+1):(3*k)]
+      
+      # calculate the likelihood with the previous estimated parameters
+      like <- 0
+      for(i in 1:k){
+        like = like + p[i]*dnorm(y_test, mu[i], sigma[i])
+      }
+      
+      # for each fold calculate the mean of the log-likelihood
+      like.j <- c(like.j, mean(log(like)))
+    }
+    
+    # save the i-th expectation
+    expectations <- c(expectations, mean(like.j))
+  }
+  best.cross.v <- which.max(expectations) # return the index of the k component the maximize the score
+  return(best.cross.v)
+}
+```
+
+```{r}
+k.fold.cross.validation(XX, 5, 8, 20)
 ```
 
