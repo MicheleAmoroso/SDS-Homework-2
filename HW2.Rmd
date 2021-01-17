@@ -15,7 +15,6 @@ fit_em = function(vals, weights, mu, sigma, n_iter, plot_flag = T)
 {
   num_gauss = length(weights)
   # Init / 2 components only
-  cols     = c(rgb(1,0,0,.3), rgb(0,1,0,.3), rgb(0,0,1,.3))
   like     = 0
   for(i in 1:num_gauss){
     like = like + weights[i]*dnorm(vals, mu[i], sigma[i])
@@ -74,8 +73,7 @@ fit_em = function(vals, weights, mu, sigma, n_iter, plot_flag = T)
              main = "", xlab = paste("EM Iteration: ", iter, "/", n_iter, sep = ""), ylim = c(0, 0.6))
         set.seed(123)
         points(jitter(vals), rep(0,length(vals)), 
-               pch = 19, cex = .6, 
-               col = cols[ (dnorm(vals,mu[1],sigma[1]) > dnorm(vals,mu[2],sigma[2])) + 1])
+               pch = 19, cex = .6)
         curve(curve_val, lwd = 4, col = rgb(0,0,0,.5), add = TRUE)
         #Sys.sleep(0.1)
       }
@@ -83,22 +81,54 @@ fit_em = function(vals, weights, mu, sigma, n_iter, plot_flag = T)
   }
   
   res = data.frame(res)
-  names(res) = c("iteration", paste("p", 1:num_gauss, sep=""), paste("mu", 1:num_gauss, sep=""), paste("sigma", 1:num_gauss, sep=""), "deviance") # generalize the number of columns with k components parameters
+  names(res) = c("iteration", paste("p", 1:num_gauss, sep=""), paste("mu", 1:num_gauss, sep=""), paste("sigma", 1:num_gauss, sep=""), "deviance")
   out = list(parameters = c(weights = weights, mu = mu, sigma = sigma), deviance = deviance, res = res) # return the final result
   return(out)
 }
-
-data("faithful")
-?faithful
-hem_fit = fit_em(faithful$waiting, 
-                       weights      = c(.3,.3,.3), 
-                       mu     = c(40,55,70), 
-                       sigma  = c(8,8,8), 
-                       n_iter = 20)
-round( hem_fit$parameters, 3 )
-hem_fit$deviance
 ```
 
+```{r}
+# Bart’s density ----------------------------------------------------------
+
+########################################################################
+# X ~ Bart Simpson's density (a.k.a. as "The Claw")                                
+#     f(x) = 0.5*dnorm(0,1) + sum(mu in 0:4){0.1*dnorm((mu/2)-1, 0.1)}
+# 
+# Mixture of 6 Normal densities with:
+# pi = c(0.5,  0.1,  0.1,  0.1,  0.1,  0.1)
+# mu = c(0.0, -1.0, -0.5,  0.0,  0.5,  1.0)
+# s  = c(1.0,  0.1,  0.1,  0.1,  0.1,  0.1)
+########################################################################
+
+# Package and function
+suppressMessages(require(mixtools, quietly = T))
+?rnormmix
+
+n <- 2000
+XX <- rnormmix(n, 
+           lambda = c(0.5, rep(0.1,5)), 
+           mu     = c(0, ((0:4)/2)-1), 
+           sigma  = c(1, rep(0.1,5)) )
+
+# Make an histogram of the data
+hist(XX, prob = T, col = gray(.8), border = NA, xlab = "x",
+     main = paste("Data from Bart's density",sep=""),
+     sub = paste("n = ", n, sep = ""),
+     breaks = 50)
+# Show the data points
+rug(XX, col = rgb(0,0,0,.5))
+
+# Plot the true density
+true.den = function(x) 0.5*dnorm(x, 0, 1) + 
+                                0.1*dnorm(x,-1.0, 0.1) + 0.1*dnorm(x, -0.5, 0.1) +
+                                0.1*dnorm(x, 0.0, 0.1) + 0.1*dnorm(x,  0.5, 0.1) +
+                                0.1*dnorm(x, 1.0, 0.1)
+curve(true.den, col = rgb(1,0,0,0.4), lwd = 3, n = 500, add = TRUE)
+
+# Add a legend
+legend("topright", c("True"), lwd = 5,
+       col = c(rgb(1,0,0,0.4)), cex = 0.8, bty = "n")
+```
 In order to help the EM algorithm find a good solution, we want to start from some reasonable mu parameters instead of choosing completely random ones.
 We decided to use the kmeans++ inizialization to select the first mu parameters.
 The main issue with this approach is that it can't identify the wider central Gaussian (the one with weight: 0.5, mu: 0 and sigma: 1) that models the Bart tails.
@@ -193,8 +223,6 @@ sample_and_fit = function(sample_size, gauss_num){
 
   out1 = fit_em(my_sample, weights, mu, sigma, n_iter = 301)
   r = out1$res
-  print(r)
-  #print(r[length(r)])
 }
 ```
 
@@ -343,8 +371,8 @@ cross_validation = function(y, k_folds, kmax, n_iter, weights_list, mu_list, sig
       fold = fold_names[x]
       
       testIndex = unlist(folds[fold], use.names=FALSE)
-      test.set = y[testIndex]            
-      train.set = y[-testIndex]          
+      y_test = y[testIndex]            
+      y_train = y[-testIndex]          
       
       # randomly initialize parameters
       weights = weights_list[[k]]
@@ -352,7 +380,7 @@ cross_validation = function(y, k_folds, kmax, n_iter, weights_list, mu_list, sig
       sigma = sigma_list[[k]]
       
       # get the estimated parameters
-      res = fit_em(train.set, weights, mu, sigma, n_iter = n_iter, plot_flag = F)
+      res = fit_em(y_train, weights, mu, sigma, n_iter = n_iter, plot_flag = F)
       
       weights = res$parameters[1:k]
       mu = res$parameters[(k+1):(2*k)]
@@ -450,7 +478,7 @@ simulate <- function(sample_size, M, n_iter, kmax){
                                       times = 1)
     y_train = vals[ trainIndex]
     y_test  = vals[-trainIndex]
-    sample_splitting_50_50_val = sample_splitting(y_train, y_test, kmax = k_max, n_iter = n_iter, weights_list, mu_list, sigma_list)
+    sample_splitting_50_50_val = sample_splitting(y_train, y_test, kmax = kmax, n_iter = n_iter, weights_list, mu_list, sigma_list)
     sample_splitting_50_50 = c(sample_splitting_50_50, sample_splitting_50_50_val)
     
 
@@ -460,7 +488,7 @@ simulate <- function(sample_size, M, n_iter, kmax){
                                       times = 1)
     y_train = vals[ trainIndex]
     y_test  = vals[-trainIndex]
-    sample_splitting_70_30_val = sample_splitting(y_train, y_test, kmax = k_max, n_iter = n_iter, weights_list, mu_list, sigma_list)
+    sample_splitting_70_30_val = sample_splitting(y_train, y_test, kmax = kmax, n_iter = n_iter, weights_list, mu_list, sigma_list)
     sample_splitting_70_30 = c(sample_splitting_70_30, sample_splitting_70_30_val)
     
 
@@ -470,7 +498,7 @@ simulate <- function(sample_size, M, n_iter, kmax){
                                       times = 1)
     y_train = vals[ trainIndex]
     y_test  = vals[-trainIndex]
-    sample_splitting_30_70_val = sample_splitting(y_train, y_test, kmax = k_max, n_iter = n_iter, weights_list, mu_list, sigma_list)
+    sample_splitting_30_70_val = sample_splitting(y_train, y_test, kmax = kmax, n_iter = n_iter, weights_list, mu_list, sigma_list)
     sample_splitting_30_70 = c(sample_splitting_30_70, sample_splitting_30_70_val)
     
 
@@ -504,14 +532,14 @@ simulate <- function(sample_size, M, n_iter, kmax){
   best_cross_validation_10 = which.max(tabulate(cross_validation_10))
   best_wasserstein = which.max(tabulate(wasserstein))
   
-  return(list(aic = aic, bic = bic, sample_splitting_50_50 = sample_splitting_50_50, sample_splitting_70_30 = sample_splitting_70_30, sample_splitting_30_70 = sample_splitting_30_70, cross_validation_5 = cross_validation_5, cross_validation_10 = cross_validation_10, wasserstein = wasserstein))
+  return(list(aic = aic, bic = bic, sample_splitting_50_50 = sample_splitting_50_50, sample_splitting_70_30 = sample_splitting_70_30, sample_splitting_30_70 = sample_splitting_30_70, cross_validation_5 = cross_validation_5, cross_validation_10 = cross_validation_10, wasserstein = wasserstein, best_aic = best_aic, best_bic = best_bic, best_sample_splitting_50_50 = best_sample_splitting_50_50, best_sample_splitting_70_30 = best_sample_splitting_70_30, best_sample_splitting_30_70 = best_sample_splitting_30_70, best_cross_validation_5 = best_cross_validation_5, best_cross_validation_10 = best_cross_validation_10, best_wasserstein = best_wasserstein))
 }
 ```
 
 We first run it on the smaller sample size.
 
 ```{r message=FALSE, warning=FALSE}
- par_n1 = simulate(sample_size = 200, M = 100, n_iter = 25, kmax = 12)
+par_n1 = simulate(sample_size = 200, M = 100, n_iter = 25, kmax = 12)
 ```
 
 Then on the bigger one.
@@ -558,7 +586,39 @@ Then the bigger one.
 plot_functions(par_n2)
 ```
 
+```{r}
+require(ggplot2)
+plot_best <- function(par_n){
+  
+  aic = par_n$best_aic
+  bic = par_n$best_bic
+  sample_splitting_50_50 = par_n$best_sample_splitting_50_50
+  sample_splitting_70_30 = par_n$best_sample_splitting_70_30
+  sample_splitting_30_70 = par_n$best_sample_splitting_30_70
+  cross_validation_5 = par_n$best_cross_validation_5
+  cross_validation_10 = par_n$best_cross_validation_10
+  wasserstein = par_n$best_wasserstein
+  
+  vals = c(aic, bic, sample_splitting_50_50, sample_splitting_70_30, sample_splitting_30_70, cross_validation_5, cross_validation_10, wasserstein)
+  
+  # Create data
+  data <- data.frame(
+    name=c("aic","bic","s.s. 50% 50%","s.s. 70% 30%","s.s. 30% 70%", "c.v. 5 folds", "c.v. 10 folds", "wasserstein") ,  
+    value=vals
+    )
+  
+  # Barplot
+  ggplot(data, aes(x=name, y=value)) + 
+    geom_bar(stat = "identity")
+  
+}
+```
 
 
+```{r}
+plot_best(par_n1)
+```
 
-
+```{r}
+plot_best(par_n2)
+```
