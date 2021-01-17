@@ -221,7 +221,7 @@ sample_and_fit = function(sample_size, gauss_num){
   mu = par$mu
   sigma = par$sigma
 
-  out1 = fit_em(my_sample, weights, mu, sigma, n_iter = 301)
+  out1 = fit_em(my_sample, weights, mu, sigma, n_iter = 300)
   r = out1$res
 }
 ```
@@ -404,7 +404,10 @@ cross_validation = function(y, k_folds, kmax, n_iter, weights_list, mu_list, sig
 }
 ```
 
-Insert Wasserstein Comment.
+
+3h. Wasserstein distance
+
+The Wasserstein distance is a distance function defined between probability distributions on a given metric space.
 
 ```{r message=FALSE, warning=FALSE}
 library(KScorrect) # import this library in order to apply the integrate function
@@ -518,9 +521,6 @@ simulate <- function(sample_size, M, n_iter, kmax){
     wasserstein_val = wasserstein_score(y_train, y_test, kmax, n_iter, weights_list, mu_list, sigma_list)
     wasserstein = c(wasserstein, wasserstein_val)
     
-    
-    cat(paste(i, "| "))
-    
   }
   
   best_aic = which.max(tabulate(aic))
@@ -548,7 +548,7 @@ Then on the bigger one.
 par_n2 = simulate(sample_size = 2000, M = 100, n_iter = 25, kmax = 12)
 ```
 
-We are now interested in analyzing our results. Let's plot for each method, the number of occurrence of each number of Gaussians.
+We are now interested in analyzing our results. Let's plot for each method, the number of occurrences of each number of Gaussians.
 
 ```{r}
 plot_functions <- function(par_n){
@@ -562,14 +562,14 @@ plot_functions <- function(par_n){
   cross_validation_10 = table(par_n$cross_validation_10)
   wasserstein = table(par_n$wasserstein)
   
-  barplot(aic, main="AIC", xlab="k")
-  barplot(bic, main="BIC", xlab="k")
-  barplot(sample_splitting_50_50, main="Sample Splitting with 50% in train and 50% in test", xlab="k")
-  barplot(sample_splitting_70_30, main="Sample Splitting with 70% in train and 30% in test", xlab="k")
-  barplot(sample_splitting_30_70, main="Sample Splitting with 30% in train and 70% in test", xlab="k")
-  barplot(cross_validation_5, main="5-fold Cross-Validation", xlab="k")
-  barplot(cross_validation_10, main="10-fold Cross-Validation", xlab="k")
-  barplot(wasserstein, main="Wasserstein", xlab="k")
+  barplot(aic, main="AIC", xlab="k", ylab="Frequency")
+  barplot(bic, main="BIC", xlab="k", ylab="Frequency")
+  barplot(sample_splitting_50_50, main="Sample Splitting with 50% in train and 50% in test", xlab="k", ylab="Frequency")
+  barplot(sample_splitting_70_30, main="Sample Splitting with 70% in train and 30% in test", xlab="k", ylab="Frequency")
+  barplot(sample_splitting_30_70, main="Sample Splitting with 30% in train and 70% in test", xlab="k", ylab="Frequency")
+  barplot(cross_validation_5, main="5-fold Cross-Validation", xlab="k", ylab="Frequency")
+  barplot(cross_validation_10, main="10-fold Cross-Validation", xlab="k", ylab="Frequency")
+  barplot(wasserstein, main="Wasserstein", xlab="k", ylab="Frequency")
   
 }
 ```
@@ -586,9 +586,11 @@ Then the bigger one.
 plot_functions(par_n2)
 ```
 
+Now we want to visualize, for each model selection method, the most frequent number of gaussians.
+
 ```{r}
 require(ggplot2)
-plot_best <- function(par_n){
+plot_best <- function(n, par_n){
   
   aic = par_n$best_aic
   bic = par_n$best_bic
@@ -603,22 +605,29 @@ plot_best <- function(par_n){
   
   # Create data
   data <- data.frame(
-    name=c("aic","bic","s.s. 50% 50%","s.s. 70% 30%","s.s. 30% 70%", "c.v. 5 folds", "c.v. 10 folds", "wasserstein") ,  
-    value=vals
+    model_selection_method=c("aic","bic","s.s. 50% 50%","s.s. 70% 30%","s.s. 30% 70%", "c.v. 5 folds", "c.v. 10 folds", "wasserstein") ,  
+    gauss_num=vals
     )
   
   # Barplot
-  ggplot(data, aes(x=name, y=value)) + 
-    geom_bar(stat = "identity")
+  ggplot(data, aes(x=model_selection_method, y=gauss_num)) + 
+    geom_bar(stat = "identity") + ggtitle(paste("Best k with n = ", n))
   
 }
 ```
 
+For the smaller sample size, the optimal number of gaussians is one for each model except the AIC.
+This might be because the sample is too small to identify a bart distribution.
 
 ```{r}
-plot_best(par_n1)
+plot_best(n = 200, par_n1)
 ```
 
+For the bigger sample most of our models return a number of gaussians which is between 10 and 12. 
+This might be because, as noted before, the bart tails are probably modelled using multiple gaussian while in the original bart they are modelled with a single central gaussian with an high sigma.
+The BIC is the closest to the true number of gaussians. This might be because this method penalizes more complex models.
+
 ```{r}
-plot_best(par_n2)
+plot_best(n = 2000, par_n2)
 ```
+
