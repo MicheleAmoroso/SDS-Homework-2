@@ -5,9 +5,11 @@ date: "1/9/2021"
 output: html_document
 ---
 
+For this homework we want to learn the Bart distribution from data using a MoG. To do so, we'll design a simulation study and compare the performance of different model selection techniques.
+
+Our starting point is the following function which implements an expectation-maximization (EM) algorithm. Given some input data, this iterative algorithm computes (local) maximum likelihood estimates using a MoG model. 
 
 ```{r}
-# Handmade EM4MoG ---------------------------------------------------------
 
 fit_em = function(vals, weights, mu, sigma, n_iter, plot_flag = T)
 {
@@ -97,6 +99,11 @@ round( hem_fit$parameters, 3 )
 hem_fit$deviance
 ```
 
+In order to help the EM algorithm find a good solution, we want to start from some reasonable mu parameters instead of choosing completely random ones.
+We decided to use the kmeans++ inizialization to select the first mu parameters.
+The main issue with this approach is that it can't identify the wider central Gaussian (the one with weight: 0.5, mu: 0 and sigma: 1) that models the Bart tails.
+As a result, our model will probably use some extra Gaussians for the tails and the optimal number of Gaussians won't be exactly 6.
+
 ```{r}
 require(pracma)
 
@@ -112,10 +119,14 @@ kmpp = function(vals, k) {
   }
   
   return(list(centers = vals[centroids]))
-  #kmeans(vals, vals[centroids, ])
 }
 
 ```
+
+We also want to initialize the weights and sigmas of our Gaussians.
+To do so, we assign an equal weight for each Gaussian (they sum up to 1) and a sigma of 0.2 for each of them.
+
+The following function combines the mu initialization with the weights and sigmas initialization.
 
 ```{r}
 
@@ -137,6 +148,35 @@ initialize_parameters = function(vals, k){
 }
 ```
 
+We define a function that samples from the Bart and initializes the parameters for each number of Guassians.
+
+```{r}
+sample_from_bart <- function(k_max, n){
+  
+  weights_list = list()
+  mu_list = list()
+  sigma_list = list()
+  
+  vals = rnormmix(n,
+               lambda = c(0.5, rep(0.1,5)),
+               mu = c(0, ((0:4)/2)-1),
+               sigma = c(1, rep(0.1,5)) )
+  
+  for(k in 1:k_max){
+    par = initialize_parameters(vals = vals, k = k)
+    weights_list = append(weights_list, list(par$weights))
+    mu_list = append(mu_list, list(par$mu))
+    sigma_list = append(sigma_list, list(par$sigma))
+  }
+  
+  return(list(vals = vals, weights_list = weights_list, mu_list = mu_list, sigma_list = sigma_list))
+}
+```
+
+we now want to test our EM function with a specific number of Gaussians (we pick 6 in this case because it's the true number of Gaussians of the Bart).
+
+We pick two sample sizes n1 < n2, to probe a clearly non-asymptotic and a reasonably asymptotic regime.
+In our case n1 = 200 and n2 = 2000.
 
 ```{r}
 require(mixtools)
@@ -158,35 +198,27 @@ sample_and_fit = function(sample_size, gauss_num){
 }
 ```
 
-```{r}
-sample_and_fit(sample_size = 250, gauss_num = 6)
-```
+Non asymptotic Regime.
 
 ```{r}
-sample_and_fit(sample_size = 3000, gauss_num = 6)
+sample_and_fit(sample_size = 200, gauss_num = 6)
 ```
+
+Asymptotic Regime.
 
 ```{r}
-k_max = 12
-weights_list = list()
-mu_list = list()
-sigma_list = list()
-
-n = 200
-vals = rnormmix(n,
-             lambda = c(0.5, rep(0.1,5)),
-             mu = c(0, ((0:4)/2)-1),
-             sigma = c(1, rep(0.1,5)) )
-
-for(k in 1:k_max){
-  par = initialize_parameters(vals = vals, k = k)
-  weights_list = append(weights_list, list(par$weights))
-  mu_list = append(mu_list, list(par$mu))
-  sigma_list = append(sigma_list, list(par$sigma))
-}
+sample_and_fit(sample_size = 2000, gauss_num = 6)
 ```
 
+3a. AIC
 
+Our first model selection method is the Akaike Information Criterion (AIC).
+
+Given a collection of models with different number of Gaussians, this method estimates the quality of each model and picks the one with the highest score.
+
+In particular, AIC rewards goodness of fit (as assessed by the likelihood function), but it also includes a penalty that is an increasing function of the number of estimated parameters.
+
+This allows to prevent overfitting.
 
 ```{r}
 # AIC
@@ -218,12 +250,9 @@ AIC = function(y, kmax, n_iter, weights_list, mu_list, sigma_list) {
 }
 ```
 
+3b. BIC
 
-```{r}
-AIC(y = vals, kmax = 8, n_iter = 20, weights_list = weights_list, mu_list = mu_list, sigma_list = sigma_list)
-```
-
-
+A similar approach to the AIC.
 
 ```{r}
 BIC = function(y, kmax, n_iter, weights_list, mu_list, sigma_list) {
@@ -254,11 +283,12 @@ BIC = function(y, kmax, n_iter, weights_list, mu_list, sigma_list) {
 }
 ```
 
+3c-d-e. Sample splitting
 
+Now we want to split our sample in 2 different partitions: training set and test set.
 
-```{r}
-BIC(y = vals, kmax = 12, n_iter = 25, weights_list = weights_list, mu_list = mu_list, sigma_list = sigma_list)
-```
+The first set will be used to train the model and find the parameters, then we'll compute the likelihood on the test set and choose the model with the highest likelihood.
+This approach helps to avoid overfitting, because the model is tested on data that hasn't been seen before.
 
 
 ```{r}
@@ -289,44 +319,14 @@ sample_splitting = function(y_train, y_test, kmax, n_iter, weights_list, mu_list
 }
 ```
 
+3.f-e K-Fold Cross Validation
 
-```{r}
-require(caret)
-# 50% 50%
-trainIndex = createDataPartition(vals, p = .5, 
-                                  list = FALSE, 
-                                  times = 1)
-y_train = vals[ trainIndex]
-y_test  = vals[-trainIndex]
+Cross Validation is another method used to assess how well a model will work on unseen data.
 
-sample_splitting(y_train, y_test, kmax = 8, n_iter = 20, weights_list, mu_list, sigma_list)
-```
+It works by repeatedly splitting the data in training and test set, performing the analysis on the first set and validating the analysis on the second one.
+The validation results are then averaged over the rounds to give an estimate of the model's predictive performance.
 
-
-
-```{r}
-# 70% 30%
-trainIndex = createDataPartition(vals, p = .7, 
-                                  list = FALSE, 
-                                  times = 1)
-y_train = vals[ trainIndex]
-y_test  = vals[-trainIndex]
-
-sample_splitting(y_train, y_test, kmax = 8, n_iter = 20, weights_list, mu_list, sigma_list)
-```
-
-
-
-```{r}
-# 30% 70%
-trainIndex = createDataPartition(vals, p = .3, 
-                                  list = FALSE, 
-                                  times = 1)
-y_train = vals[ trainIndex]
-y_test  = vals[-trainIndex]
-
-sample_splitting(y_train, y_test, kmax = 8, n_iter = 20, weights_list, mu_list, sigma_list)
-```
+With this method, we select the model with the best Cross Validation score.
 
 ```{r message=FALSE, warning=FALSE}
 library(caret)
@@ -376,14 +376,7 @@ cross_validation = function(y, k_folds, kmax, n_iter, weights_list, mu_list, sig
 }
 ```
 
-
-```{r}
-cross_validation(vals, k_folds = 5, kmax = 8, n_iter = 20, weights_list, mu_list, sigma_list)
-```
-
-```{r}
-cross_validation(vals, k_folds = 10, kmax = 8, n_iter = 20, weights_list, mu_list, sigma_list)
-```
+Insert Wasserstein Comment.
 
 ```{r message=FALSE, warning=FALSE}
 library(KScorrect) # import this library in order to apply the integrate function
@@ -419,41 +412,10 @@ wasserstein_score <- function(y_train, y_test, kmax, n_iter, weights_list, mu_li
 }
 ```
 
-```{r message=FALSE, warning=FALSE}
-# 50% 50%
-trainIndex = createDataPartition(vals, p = .5, 
-                                  list = FALSE, 
-                                  times = 1)
-y_train = vals[ trainIndex]
-y_test  = vals[-trainIndex]
+Now that we have defined all our model selection methods, we want to simulate M times from the Bart, for each sample size, and apply each of our model selection methods.
+For each method, we will have M different prediction of the best number of Gaussians, and we will pick the most frequent one (following a frequentist approach).
 
-wasserstein_score(y_train, y_test, kmax = 8, n_iter = 25, weights_list, mu_list, sigma_list)
-```
-
-
-```{r}
-sample_from_bart <- function(k_max, n){
-  
-  weights_list = list()
-  mu_list = list()
-  sigma_list = list()
-  
-  vals = rnormmix(n,
-               lambda = c(0.5, rep(0.1,5)),
-               mu = c(0, ((0:4)/2)-1),
-               sigma = c(1, rep(0.1,5)) )
-  
-  for(k in 1:k_max){
-    par = initialize_parameters(vals = vals, k = k)
-    weights_list = append(weights_list, list(par$weights))
-    mu_list = append(mu_list, list(par$mu))
-    sigma_list = append(sigma_list, list(par$sigma))
-  }
-  
-  return(list(vals = vals, weights_list = weights_list, mu_list = mu_list, sigma_list = sigma_list))
-}
-```
-
+Let's define the simulation function.
 
 ```{r}
 simulate <- function(sample_size, M, n_iter, kmax){
@@ -546,14 +508,19 @@ simulate <- function(sample_size, M, n_iter, kmax){
 }
 ```
 
+We first run it on the smaller sample size.
 
 ```{r message=FALSE, warning=FALSE}
  par_n1 = simulate(sample_size = 200, M = 100, n_iter = 25, kmax = 12)
 ```
 
+Then on the bigger one.
+
 ```{r message=FALSE, warning=FALSE}
 par_n2 = simulate(sample_size = 2000, M = 100, n_iter = 25, kmax = 12)
 ```
+
+We are now interested in analyzing our results. Let's plot for each method, the number of occurrence of each number of Gaussians.
 
 ```{r}
 plot_functions <- function(par_n){
@@ -579,10 +546,13 @@ plot_functions <- function(par_n){
 }
 ```
 
+We first plot the smaller sample size.
+
 ```{r}
 plot_functions(par_n1)
 ```
 
+Then the bigger one.
 
 ```{r}
 plot_functions(par_n2)
